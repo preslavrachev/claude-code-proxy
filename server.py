@@ -19,8 +19,9 @@ import sys
 load_dotenv()
 
 # Configure logging
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARN").upper()
 logging.basicConfig(
-    level=logging.WARN,  # Change to INFO level to show more details
+    level=getattr(logging, LOG_LEVEL, logging.WARN),
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
@@ -591,8 +592,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         litellm_request["top_k"] = anthropic_request.top_k
     
     # Convert tools to OpenAI format
-    # Skip for Ollama models which don't support function calling
-    if anthropic_request.tools and not anthropic_request.model.startswith("ollama/"):
+    if anthropic_request.tools:
         openai_tools = []
         is_gemini_model = anthropic_request.model.startswith("gemini/")
 
@@ -628,7 +628,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         litellm_request["tools"] = openai_tools
 
     # Convert tool_choice to OpenAI format if present
-    if anthropic_request.tool_choice and not anthropic_request.model.startswith("ollama/"):
+    if anthropic_request.tool_choice:
         if hasattr(anthropic_request.tool_choice, 'dict'):
             tool_choice_dict = anthropic_request.tool_choice.dict()
         else:
@@ -897,6 +897,19 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         async for chunk in response_generator:
             try:
 
+                # Log streaming chunks for Ollama models
+                if original_request.model.startswith("ollama/"):
+                    try:
+                        chunk_payload = (
+                            chunk.dict() if hasattr(chunk, "dict") else chunk
+                        )
+                        logger.info(
+                            "⬅️ Ollama stream chunk: %s",
+                            json.dumps(chunk_payload, indent=2, default=str),
+                        )
+                    except Exception as e:
+                        logger.info(f"⬅️ Ollama stream chunk logging failed: {e}")
+
                 
                 # Check if this is the end of the response with usage data
                 if hasattr(chunk, 'usage') and chunk.usage is not None:
@@ -1160,6 +1173,25 @@ async def create_message(
         else:
             litellm_request["api_key"] = ANTHROPIC_API_KEY
             logger.debug(f"Using Anthropic API key for model: {request.model}")
+
+        # Log outbound request payload for Ollama models
+        if request.model.startswith("ollama/"):
+            try:
+                logger.info(
+                    "➡️ Ollama request: %s",
+                    json.dumps(
+                        {
+                            "model": litellm_request.get("model"),
+                            "messages": litellm_request.get("messages"),
+                            "tools": litellm_request.get("tools"),
+                            "tool_choice": litellm_request.get("tool_choice"),
+                        },
+                        indent=2,
+                        default=str,
+                    ),
+                )
+            except Exception as e:
+                logger.info(f"➡️ Ollama request logging failed: {e}")
         
         # For OpenAI models - modify request format to work with limitations
         if "openai" in litellm_request["model"] and "messages" in litellm_request:
@@ -1353,6 +1385,21 @@ async def create_message(
                 **litellm_request,
             )
             logger.debug(f"✅ RESPONSE RECEIVED: Model={model}, Time={time.time() - start_time:.2f}s")
+
+            # Log raw response for Ollama models
+            if model.startswith("ollama/"):
+                try:
+                    response_payload = (
+                        litellm_response.dict()
+                        if hasattr(litellm_response, "dict")
+                        else litellm_response
+                    )
+                    logger.info(
+                        "⬅️ Ollama response: %s",
+                        json.dumps(response_payload, indent=2, default=str),
+                    )
+                except Exception as e:
+                    logger.info(f"⬅️ Ollama response logging failed: {e}")
 
             # Convert LiteLLM response to Anthropic format
             anthropic_response = convert_litellm_to_anthropic(litellm_response, request)

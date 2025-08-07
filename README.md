@@ -45,6 +45,7 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`.
    *   `OLLAMA_API_BASE` (Optional): URL to your Ollama server. Defaults to `http://localhost:11434`.
    *   `OLLAMA_API_KEY` (Optional): Only needed if your Ollama server requires auth; a placeholder is used if unset.
+   *   `LOG_LEVEL` (Optional): Set to `INFO` to log requests and responses (use `DEBUG` for even more detail).
 
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
@@ -106,6 +107,8 @@ The following Gemini models are supported with automatic `gemini/` prefix handli
 The following Ollama models are supported with automatic `ollama/` prefix handling:
 - qwen3:0.6b
   - Default `api_base` is `http://localhost:11434` (override with `OLLAMA_API_BASE`)
+  - Tool calling is supported for models that advertise it (e.g. [Llama 3.1](https://ollama.com/library/llama3.1), [Mistral Nemo](https://ollama.com/library/mistral-nemo), [Firefunction v2](https://ollama.com/library/firefunction-v2), [Command-R+](https://ollama.com/library/command-r-plus)).
+    Check [Ollama's tool-capable models](https://ollama.com/search?c=tools) for the current list.
 
 ### Model Prefix Handling
 The proxy automatically adds the appropriate prefix to model names:
