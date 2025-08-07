@@ -108,7 +108,6 @@ The following Ollama models are supported with automatic `ollama/` prefix handli
 - qwen3:0.6b
   - Default `api_base` is `http://localhost:11434` (override with `OLLAMA_API_BASE`)
   - Tool calling is supported for models that advertise it (e.g. [Llama 3.1](https://ollama.com/library/llama3.1), [Mistral Nemo](https://ollama.com/library/mistral-nemo), [Firefunction v2](https://ollama.com/library/firefunction-v2), [Command-R+](https://ollama.com/library/command-r-plus)).
-    The proxy automatically drops tool metadata for other Ollama models like `qwen3:0.6b`, so the default Todo tools will not work with them.
     Check [Ollama's tool-capable models](https://ollama.com/search?c=tools) for the current list.
 
 ### Model Prefix Handling
