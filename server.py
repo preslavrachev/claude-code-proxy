@@ -591,7 +591,8 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         litellm_request["top_k"] = anthropic_request.top_k
     
     # Convert tools to OpenAI format
-    if anthropic_request.tools:
+    # Skip for Ollama models which don't support function calling
+    if anthropic_request.tools and not anthropic_request.model.startswith("ollama/"):
         openai_tools = []
         is_gemini_model = anthropic_request.model.startswith("gemini/")
 
@@ -625,9 +626,9 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             openai_tools.append(openai_tool)
 
         litellm_request["tools"] = openai_tools
-    
+
     # Convert tool_choice to OpenAI format if present
-    if anthropic_request.tool_choice:
+    if anthropic_request.tool_choice and not anthropic_request.model.startswith("ollama/"):
         if hasattr(anthropic_request.tool_choice, 'dict'):
             tool_choice_dict = anthropic_request.tool_choice.dict()
         else:
