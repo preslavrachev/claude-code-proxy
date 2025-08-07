@@ -570,12 +570,15 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
     
     # Create LiteLLM request dict
     litellm_request = {
-        "model": anthropic_request.model,  # t understands "anthropic/claude-x" format
+        "model": anthropic_request.model,  # LiteLLM understands "anthropic/claude-x" format
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": anthropic_request.temperature,
-        "stream": anthropic_request.stream,
     }
+
+    # Only include stream when explicitly requested
+    if anthropic_request.stream:
+        litellm_request["stream"] = True
     
     # Add optional parameters if present
     if anthropic_request.stop_sequences:
@@ -1298,23 +1301,33 @@ async def create_message(
         # Only log basic info about the request, not the full details
         logger.debug(f"Request for model: {litellm_request.get('model')}, stream: {litellm_request.get('stream', False)}")
         
+        # Extract required fields for LiteLLM
+        model = litellm_request.pop("model", None)
+        messages = litellm_request.pop("messages", None)
+        if not model or messages is None:
+            raise HTTPException(status_code=400, detail="Model and messages are required")
+
         # Handle streaming mode
         if request.stream:
             # Use LiteLLM for streaming
             num_tools = len(request.tools) if request.tools else 0
-            
+
             log_request_beautifully(
-                "POST", 
-                raw_request.url.path, 
-                display_model, 
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                "POST",
+                raw_request.url.path,
+                display_model,
+                model,
+                len(messages),
                 num_tools,
                 200  # Assuming success at this point
             )
             # Ensure we use the async version for streaming
-            response_generator = await litellm.acompletion(**litellm_request)
-            
+            response_generator = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                **litellm_request,
+            )
+
             return StreamingResponse(
                 handle_streaming(response_generator, request),
                 media_type="text/event-stream"
@@ -1322,23 +1335,27 @@ async def create_message(
         else:
             # Use LiteLLM for regular completion
             num_tools = len(request.tools) if request.tools else 0
-            
+
             log_request_beautifully(
-                "POST", 
-                raw_request.url.path, 
-                display_model, 
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                "POST",
+                raw_request.url.path,
+                display_model,
+                model,
+                len(messages),
                 num_tools,
                 200  # Assuming success at this point
             )
             start_time = time.time()
-            litellm_response = litellm.completion(**litellm_request)
-            logger.debug(f"✅ RESPONSE RECEIVED: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s")
-            
+            litellm_response = litellm.completion(
+                model=model,
+                messages=messages,
+                **litellm_request,
+            )
+            logger.debug(f"✅ RESPONSE RECEIVED: Model={model}, Time={time.time() - start_time:.2f}s")
+
             # Convert LiteLLM response to Anthropic format
             anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
-            
+
             return anthropic_response
                 
     except Exception as e:
