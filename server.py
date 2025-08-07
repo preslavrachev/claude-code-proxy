@@ -892,25 +892,12 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         output_tokens = 0
         has_sent_stop_reason = False
         last_tool_index = 0
-        
+        log_buffer = ""  # Buffer for logging complete sentences
+
         # Process each chunk
         async for chunk in response_generator:
             try:
 
-                # Log streaming chunks for Ollama models
-                if original_request.model.startswith("ollama/"):
-                    try:
-                        chunk_payload = (
-                            chunk.dict() if hasattr(chunk, "dict") else chunk
-                        )
-                        logger.info(
-                            "⬅️ Ollama stream chunk: %s",
-                            json.dumps(chunk_payload, indent=2, default=str),
-                        )
-                    except Exception as e:
-                        logger.info(f"⬅️ Ollama stream chunk logging failed: {e}")
-
-                
                 # Check if this is the end of the response with usage data
                 if hasattr(chunk, 'usage') and chunk.usage is not None:
                     if hasattr(chunk.usage, 'prompt_tokens'):
@@ -944,11 +931,23 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                     # Accumulate text content
                     if delta_content is not None and delta_content != "":
                         accumulated_text += delta_content
-                        
+
                         # Always emit text deltas if no tool calls started
                         if tool_index is None and not text_block_closed:
                             text_sent = True
                             yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta_content}})}\n\n"
+
+                        # Log full sentences for Ollama models
+                        if original_request.model.startswith("ollama/"):
+                            log_buffer += delta_content
+                            while True:
+                                match = re.search(r'[\.?!]\s|\n', log_buffer)
+                                if not match:
+                                    break
+                                sentence = log_buffer[:match.end()].strip()
+                                if sentence:
+                                    logger.info("⬅️ %s", sentence)
+                                log_buffer = log_buffer[match.end():]
                     
                     # Process tool calls
                     delta_tool_calls = None
@@ -1064,6 +1063,11 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                             # Close the text block
                             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
                         
+                        # Flush any remaining logged text
+                        if original_request.model.startswith("ollama/") and log_buffer.strip():
+                            logger.info("⬅️ %s", log_buffer.strip())
+                            log_buffer = ""
+
                         # Map OpenAI finish_reason to Anthropic stop_reason
                         stop_reason = "end_turn"
                         if finish_reason == "length":
@@ -1091,6 +1095,10 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         
         # If we didn't get a finish reason, close any open blocks
         if not has_sent_stop_reason:
+            if original_request.model.startswith("ollama/") and log_buffer.strip():
+                logger.info("⬅️ %s", log_buffer.strip())
+                log_buffer = ""
+
             # Close any open tool call blocks
             if tool_index is not None:
                 for i in range(1, last_tool_index + 1):
@@ -1174,22 +1182,20 @@ async def create_message(
             litellm_request["api_key"] = ANTHROPIC_API_KEY
             logger.debug(f"Using Anthropic API key for model: {request.model}")
 
-        # Log outbound request payload for Ollama models
+        # Log outbound request for Ollama models in human-readable form
         if request.model.startswith("ollama/"):
             try:
-                logger.info(
-                    "➡️ Ollama request: %s",
-                    json.dumps(
-                        {
-                            "model": litellm_request.get("model"),
-                            "messages": litellm_request.get("messages"),
-                            "tools": litellm_request.get("tools"),
-                            "tool_choice": litellm_request.get("tool_choice"),
-                        },
-                        indent=2,
-                        default=str,
-                    ),
-                )
+                logger.info("➡️ Ollama request:")
+                for msg in litellm_request.get("messages", []):
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                        content = "".join(parts)
+                    logger.info("%s: %s", role, content)
+                if litellm_request.get("tools"):
+                    tool_names = [t.get("function", {}).get("name", "") for t in litellm_request.get("tools", [])]
+                    logger.info("tools: %s", ", ".join(tool_names))
             except Exception as e:
                 logger.info(f"➡️ Ollama request logging failed: {e}")
         
@@ -1386,18 +1392,19 @@ async def create_message(
             )
             logger.debug(f"✅ RESPONSE RECEIVED: Model={model}, Time={time.time() - start_time:.2f}s")
 
-            # Log raw response for Ollama models
+            # Log human-readable response for Ollama models
             if model.startswith("ollama/"):
                 try:
-                    response_payload = (
-                        litellm_response.dict()
-                        if hasattr(litellm_response, "dict")
-                        else litellm_response
-                    )
-                    logger.info(
-                        "⬅️ Ollama response: %s",
-                        json.dumps(response_payload, indent=2, default=str),
-                    )
+                    logger.info("⬅️ Ollama response:")
+                    choices = getattr(litellm_response, "choices", [])
+                    for choice in choices:
+                        message = getattr(choice, "message", {})
+                        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+                        if isinstance(content, list):
+                            parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                            content = "".join(parts)
+                        if content:
+                            logger.info(content)
                 except Exception as e:
                     logger.info(f"⬅️ Ollama response logging failed: {e}")
 

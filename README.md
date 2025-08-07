@@ -45,7 +45,7 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`.
    *   `OLLAMA_API_BASE` (Optional): URL to your Ollama server. Defaults to `http://localhost:11434`.
    *   `OLLAMA_API_KEY` (Optional): Only needed if your Ollama server requires auth; a placeholder is used if unset.
-   *   `LOG_LEVEL` (Optional): Set to `INFO` to log requests and responses (use `DEBUG` for even more detail).
+   *   `LOG_LEVEL` (Optional): Set to `INFO` to log requests and responses as whole sentences (use `DEBUG` for even more detail).
 
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
