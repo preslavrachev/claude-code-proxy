@@ -13,6 +13,7 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
 
 - OpenAI API key 🔑
 - Google AI Studio (Gemini) API key (if using Google provider) 🔑
+- Ollama running locally (no API key required) 🖥️
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
@@ -43,6 +44,7 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.5-pro-preview-03-25`.
    *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`.
    *   `OLLAMA_API_BASE` (Optional): URL to your Ollama server. Defaults to `http://localhost:11434`.
+   *   `OLLAMA_API_KEY` (Optional): Only needed if your Ollama server requires auth; a placeholder is used if unset.
 
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.

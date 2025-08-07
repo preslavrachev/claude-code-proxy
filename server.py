@@ -81,6 +81,8 @@ app = FastAPI()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Ollama doesn't require an API key, but LiteLLM expects a value
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
 
 # Get preferred provider (default to openai)
 PREFERRED_PROVIDER = os.environ.get("PREFERRED_PROVIDER", "openai").lower()
@@ -1149,6 +1151,7 @@ async def create_message(
             logger.debug(f"Using Gemini API key for model: {request.model}")
         elif request.model.startswith("ollama/"):
             litellm_request["api_base"] = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
+            litellm_request["api_key"] = OLLAMA_API_KEY
             logger.debug(f"Using Ollama API base for model: {request.model}")
         else:
             litellm_request["api_key"] = ANTHROPIC_API_KEY
