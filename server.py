@@ -657,20 +657,6 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
     
     # Enhanced response extraction with better error handling
     try:
-        # Get the clean model name to check capabilities
-        clean_model = original_request.model
-        if clean_model.startswith("anthropic/"):
-            clean_model = clean_model[len("anthropic/"):]
-        elif clean_model.startswith("openai/"):
-            clean_model = clean_model[len("openai/"):]
-        elif clean_model.startswith("gemini/"):
-            clean_model = clean_model[len("gemini/"):]
-        elif clean_model.startswith("ollama/"):
-            clean_model = clean_model[len("ollama/"):]
-        
-        # Check if this is a Claude model (which supports content blocks)
-        is_claude_model = clean_model.startswith("claude-")
-        
         # Handle ModelResponse object from LiteLLM
         if hasattr(litellm_response, 'choices') and hasattr(litellm_response, 'usage'):
             # Extract data from ModelResponse object directly
@@ -714,17 +700,17 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
         if content_text is not None and content_text != "":
             content.append({"type": "text", "text": content_text})
         
-        # Add tool calls if present (tool_use in Anthropic format) - only for Claude models
-        if tool_calls and is_claude_model:
+        # Add tool calls if present (tool_use in Anthropic format)
+        if tool_calls:
             logger.debug(f"Processing tool calls: {tool_calls}")
-            
+
             # Convert to list if it's not already
             if not isinstance(tool_calls, list):
                 tool_calls = [tool_calls]
-                
+
             for idx, tool_call in enumerate(tool_calls):
                 logger.debug(f"Processing tool call {idx}: {tool_call}")
-                
+
                 # Extract function data based on whether it's a dict or object
                 if isinstance(tool_call, dict):
                     function = tool_call.get("function", {})
@@ -736,7 +722,7 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
                     tool_id = getattr(tool_call, "id", f"tool_{uuid.uuid4()}")
                     name = getattr(function, "name", "") if function else ""
                     arguments = getattr(function, "arguments", "{}") if function else "{}"
-                
+
                 # Convert string arguments to dict if needed
                 if isinstance(arguments, str):
                     try:
@@ -744,56 +730,15 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse tool arguments as JSON: {arguments}")
                         arguments = {"raw": arguments}
-                
+
                 logger.debug(f"Adding tool_use block: id={tool_id}, name={name}, input={arguments}")
-                
+
                 content.append({
                     "type": "tool_use",
                     "id": tool_id,
                     "name": name,
                     "input": arguments
                 })
-        elif tool_calls and not is_claude_model:
-            # For non-Claude models, convert tool calls to text format
-            logger.debug(f"Converting tool calls to text for non-Claude model: {clean_model}")
-            
-            # We'll append tool info to the text content
-            tool_text = "\n\nTool usage:\n"
-            
-            # Convert to list if it's not already
-            if not isinstance(tool_calls, list):
-                tool_calls = [tool_calls]
-                
-            for idx, tool_call in enumerate(tool_calls):
-                # Extract function data based on whether it's a dict or object
-                if isinstance(tool_call, dict):
-                    function = tool_call.get("function", {})
-                    tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
-                    name = function.get("name", "")
-                    arguments = function.get("arguments", "{}")
-                else:
-                    function = getattr(tool_call, "function", None)
-                    tool_id = getattr(tool_call, "id", f"tool_{uuid.uuid4()}")
-                    name = getattr(function, "name", "") if function else ""
-                    arguments = getattr(function, "arguments", "{}") if function else "{}"
-                
-                # Convert string arguments to dict if needed
-                if isinstance(arguments, str):
-                    try:
-                        args_dict = json.loads(arguments)
-                        arguments_str = json.dumps(args_dict, indent=2)
-                    except json.JSONDecodeError:
-                        arguments_str = arguments
-                else:
-                    arguments_str = json.dumps(arguments, indent=2)
-                
-                tool_text += f"Tool: {name}\nArguments: {arguments_str}\n\n"
-            
-            # Add or append tool text to content
-            if content and content[0]["type"] == "text":
-                content[0]["text"] += tool_text
-            else:
-                content.append({"type": "text", "text": tool_text})
         
         # Get usage information - extract values safely from object or dict
         if isinstance(usage_info, dict):
