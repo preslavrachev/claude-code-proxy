@@ -120,6 +120,14 @@ OLLAMA_MODELS = [
     "qwen3:0.6b",
 ]
 
+# Ollama models with built-in tool calling support
+OLLAMA_TOOL_MODELS = [
+    "llama3.1",
+    "mistral-nemo",
+    "firefunction-v2",
+    "command-r-plus",
+]
+
 # Helper function to clean schema for Gemini
 def clean_gemini_schema(schema: Any) -> Any:
     """Recursively removes unsupported fields from a JSON schema for Gemini."""
@@ -648,7 +656,14 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         else:
             # Default to auto if we can't determine
             litellm_request["tool_choice"] = "auto"
-    
+
+    # If targeting an Ollama model without tool support, drop tools & tool_choice
+    if anthropic_request.model.startswith("ollama/"):
+        base_model = anthropic_request.model.split("/", 1)[1]
+        if base_model not in OLLAMA_TOOL_MODELS:
+            litellm_request.pop("tools", None)
+            litellm_request.pop("tool_choice", None)
+
     return litellm_request
 
 def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any], 
