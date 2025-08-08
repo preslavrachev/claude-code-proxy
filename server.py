@@ -19,8 +19,9 @@ import sys
 load_dotenv()
 
 # Configure logging
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARN").upper()
 logging.basicConfig(
-    level=logging.WARN,  # Change to INFO level to show more details
+    level=getattr(logging, LOG_LEVEL, logging.WARN),
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
@@ -81,6 +82,8 @@ app = FastAPI()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Ollama doesn't require an API key, but LiteLLM expects a value
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")
 
 # Get preferred provider (default to openai)
 PREFERRED_PROVIDER = os.environ.get("PREFERRED_PROVIDER", "openai").lower()
@@ -110,6 +113,11 @@ OPENAI_MODELS = [
 GEMINI_MODELS = [
     "gemini-2.5-pro-preview-03-25",
     "gemini-2.0-flash"
+]
+
+# List of Ollama models
+OLLAMA_MODELS = [
+    "qwen3:0.6b",
 ]
 
 # Helper function to clean schema for Gemini
@@ -202,6 +210,8 @@ class MessagesRequest(BaseModel):
             clean_v = clean_v[7:]
         elif clean_v.startswith('gemini/'):
             clean_v = clean_v[7:]
+        elif clean_v.startswith('ollama/'):
+            clean_v = clean_v[7:]
 
         # --- Mapping Logic --- START ---
         mapped = False
@@ -209,6 +219,9 @@ class MessagesRequest(BaseModel):
         if 'haiku' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and SMALL_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{SMALL_MODEL}"
+                mapped = True
+            elif PREFERRED_PROVIDER == "ollama" and (SMALL_MODEL in OLLAMA_MODELS or SMALL_MODEL):
+                new_model = f"ollama/{SMALL_MODEL}"
                 mapped = True
             else:
                 new_model = f"openai/{SMALL_MODEL}"
@@ -218,6 +231,9 @@ class MessagesRequest(BaseModel):
         elif 'sonnet' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and BIG_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{BIG_MODEL}"
+                mapped = True
+            elif PREFERRED_PROVIDER == "ollama" and (BIG_MODEL in OLLAMA_MODELS or BIG_MODEL):
+                new_model = f"ollama/{BIG_MODEL}"
                 mapped = True
             else:
                 new_model = f"openai/{BIG_MODEL}"
@@ -231,13 +247,16 @@ class MessagesRequest(BaseModel):
             elif clean_v in OPENAI_MODELS and not v.startswith('openai/'):
                 new_model = f"openai/{clean_v}"
                 mapped = True # Technically mapped to add prefix
+            elif clean_v in OLLAMA_MODELS and not v.startswith('ollama/'):
+                new_model = f"ollama/{clean_v}"
+                mapped = True # Technically mapped to add prefix
         # --- Mapping Logic --- END ---
 
         if mapped:
             logger.debug(f"📌 MODEL MAPPING: '{original_model}' ➡️ '{new_model}'")
         else:
              # If no mapping occurred and no prefix exists, log warning or decide default
-             if not v.startswith(('openai/', 'gemini/', 'anthropic/')):
+             if not v.startswith(('openai/', 'gemini/', 'anthropic/', 'ollama/')):
                  logger.warning(f"⚠️ No prefix or mapping rule for model: '{original_model}'. Using as is.")
              new_model = v # Ensure we return the original if no rule applied
 
@@ -283,6 +302,9 @@ class TokenCountRequest(BaseModel):
             if PREFERRED_PROVIDER == "google" and SMALL_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{SMALL_MODEL}"
                 mapped = True
+            elif PREFERRED_PROVIDER == "ollama" and (SMALL_MODEL in OLLAMA_MODELS or SMALL_MODEL):
+                new_model = f"ollama/{SMALL_MODEL}"
+                mapped = True
             else:
                 new_model = f"openai/{SMALL_MODEL}"
                 mapped = True
@@ -291,6 +313,9 @@ class TokenCountRequest(BaseModel):
         elif 'sonnet' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and BIG_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{BIG_MODEL}"
+                mapped = True
+            elif PREFERRED_PROVIDER == "ollama" and (BIG_MODEL in OLLAMA_MODELS or BIG_MODEL):
+                new_model = f"ollama/{BIG_MODEL}"
                 mapped = True
             else:
                 new_model = f"openai/{BIG_MODEL}"
@@ -304,12 +329,15 @@ class TokenCountRequest(BaseModel):
             elif clean_v in OPENAI_MODELS and not v.startswith('openai/'):
                 new_model = f"openai/{clean_v}"
                 mapped = True # Technically mapped to add prefix
+            elif clean_v in OLLAMA_MODELS and not v.startswith('ollama/'):
+                new_model = f"ollama/{clean_v}"
+                mapped = True # Technically mapped to add prefix
         # --- Mapping Logic --- END ---
 
         if mapped:
             logger.debug(f"📌 TOKEN COUNT MAPPING: '{original_model}' ➡️ '{new_model}'")
         else:
-             if not v.startswith(('openai/', 'gemini/', 'anthropic/')):
+             if not v.startswith(('openai/', 'gemini/', 'anthropic/', 'ollama/')):
                  logger.warning(f"⚠️ No prefix or mapping rule for token count model: '{original_model}'. Using as is.")
              new_model = v # Ensure we return the original if no rule applied
 
@@ -533,18 +561,25 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
     
     # Cap max_tokens for OpenAI models to their limit of 16384
     max_tokens = anthropic_request.max_tokens
-    if anthropic_request.model.startswith("openai/") or anthropic_request.model.startswith("gemini/"):
+    if (anthropic_request.model.startswith("openai/") or
+        anthropic_request.model.startswith("gemini/") or
+        anthropic_request.model.startswith("ollama/")):
         max_tokens = min(max_tokens, 16384)
-        logger.debug(f"Capping max_tokens to 16384 for OpenAI/Gemini model (original value: {anthropic_request.max_tokens})")
+        logger.debug(
+            f"Capping max_tokens to 16384 for OpenAI/Gemini/Ollama model (original value: {anthropic_request.max_tokens})"
+        )
     
     # Create LiteLLM request dict
     litellm_request = {
-        "model": anthropic_request.model,  # t understands "anthropic/claude-x" format
+        "model": anthropic_request.model,  # LiteLLM understands "anthropic/claude-x" format
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": anthropic_request.temperature,
-        "stream": anthropic_request.stream,
     }
+
+    # Only include stream when explicitly requested
+    if anthropic_request.stream:
+        litellm_request["stream"] = True
     
     # Add optional parameters if present
     if anthropic_request.stop_sequences:
@@ -591,7 +626,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             openai_tools.append(openai_tool)
 
         litellm_request["tools"] = openai_tools
-    
+
     # Convert tool_choice to OpenAI format if present
     if anthropic_request.tool_choice:
         if hasattr(anthropic_request.tool_choice, 'dict'):
@@ -622,16 +657,6 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
     
     # Enhanced response extraction with better error handling
     try:
-        # Get the clean model name to check capabilities
-        clean_model = original_request.model
-        if clean_model.startswith("anthropic/"):
-            clean_model = clean_model[len("anthropic/"):]
-        elif clean_model.startswith("openai/"):
-            clean_model = clean_model[len("openai/"):]
-        
-        # Check if this is a Claude model (which supports content blocks)
-        is_claude_model = clean_model.startswith("claude-")
-        
         # Handle ModelResponse object from LiteLLM
         if hasattr(litellm_response, 'choices') and hasattr(litellm_response, 'usage'):
             # Extract data from ModelResponse object directly
@@ -675,17 +700,17 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
         if content_text is not None and content_text != "":
             content.append({"type": "text", "text": content_text})
         
-        # Add tool calls if present (tool_use in Anthropic format) - only for Claude models
-        if tool_calls and is_claude_model:
+        # Add tool calls if present (tool_use in Anthropic format)
+        if tool_calls:
             logger.debug(f"Processing tool calls: {tool_calls}")
-            
+
             # Convert to list if it's not already
             if not isinstance(tool_calls, list):
                 tool_calls = [tool_calls]
-                
+
             for idx, tool_call in enumerate(tool_calls):
                 logger.debug(f"Processing tool call {idx}: {tool_call}")
-                
+
                 # Extract function data based on whether it's a dict or object
                 if isinstance(tool_call, dict):
                     function = tool_call.get("function", {})
@@ -697,7 +722,7 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
                     tool_id = getattr(tool_call, "id", f"tool_{uuid.uuid4()}")
                     name = getattr(function, "name", "") if function else ""
                     arguments = getattr(function, "arguments", "{}") if function else "{}"
-                
+
                 # Convert string arguments to dict if needed
                 if isinstance(arguments, str):
                     try:
@@ -705,56 +730,15 @@ def convert_litellm_to_anthropic(litellm_response: Union[Dict[str, Any], Any],
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse tool arguments as JSON: {arguments}")
                         arguments = {"raw": arguments}
-                
+
                 logger.debug(f"Adding tool_use block: id={tool_id}, name={name}, input={arguments}")
-                
+
                 content.append({
                     "type": "tool_use",
                     "id": tool_id,
                     "name": name,
                     "input": arguments
                 })
-        elif tool_calls and not is_claude_model:
-            # For non-Claude models, convert tool calls to text format
-            logger.debug(f"Converting tool calls to text for non-Claude model: {clean_model}")
-            
-            # We'll append tool info to the text content
-            tool_text = "\n\nTool usage:\n"
-            
-            # Convert to list if it's not already
-            if not isinstance(tool_calls, list):
-                tool_calls = [tool_calls]
-                
-            for idx, tool_call in enumerate(tool_calls):
-                # Extract function data based on whether it's a dict or object
-                if isinstance(tool_call, dict):
-                    function = tool_call.get("function", {})
-                    tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
-                    name = function.get("name", "")
-                    arguments = function.get("arguments", "{}")
-                else:
-                    function = getattr(tool_call, "function", None)
-                    tool_id = getattr(tool_call, "id", f"tool_{uuid.uuid4()}")
-                    name = getattr(function, "name", "") if function else ""
-                    arguments = getattr(function, "arguments", "{}") if function else "{}"
-                
-                # Convert string arguments to dict if needed
-                if isinstance(arguments, str):
-                    try:
-                        args_dict = json.loads(arguments)
-                        arguments_str = json.dumps(args_dict, indent=2)
-                    except json.JSONDecodeError:
-                        arguments_str = arguments
-                else:
-                    arguments_str = json.dumps(arguments, indent=2)
-                
-                tool_text += f"Tool: {name}\nArguments: {arguments_str}\n\n"
-            
-            # Add or append tool text to content
-            if content and content[0]["type"] == "text":
-                content[0]["text"] += tool_text
-            else:
-                content.append({"type": "text", "text": tool_text})
         
         # Get usage information - extract values safely from object or dict
         if isinstance(usage_info, dict):
@@ -853,12 +837,12 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         output_tokens = 0
         has_sent_stop_reason = False
         last_tool_index = 0
-        
+        log_buffer = ""  # Buffer for logging complete sentences
+
         # Process each chunk
         async for chunk in response_generator:
             try:
 
-                
                 # Check if this is the end of the response with usage data
                 if hasattr(chunk, 'usage') and chunk.usage is not None:
                     if hasattr(chunk.usage, 'prompt_tokens'):
@@ -892,11 +876,23 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                     # Accumulate text content
                     if delta_content is not None and delta_content != "":
                         accumulated_text += delta_content
-                        
+
                         # Always emit text deltas if no tool calls started
                         if tool_index is None and not text_block_closed:
                             text_sent = True
                             yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta_content}})}\n\n"
+
+                        # Log full sentences for Ollama models
+                        if original_request.model.startswith("ollama/"):
+                            log_buffer += delta_content
+                            while True:
+                                match = re.search(r'[\.?!]\s|\n', log_buffer)
+                                if not match:
+                                    break
+                                sentence = log_buffer[:match.end()].strip()
+                                if sentence:
+                                    logger.info("⬅️ %s", sentence)
+                                log_buffer = log_buffer[match.end():]
                     
                     # Process tool calls
                     delta_tool_calls = None
@@ -1012,6 +1008,11 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
                             # Close the text block
                             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
                         
+                        # Flush any remaining logged text
+                        if original_request.model.startswith("ollama/") and log_buffer.strip():
+                            logger.info("⬅️ %s", log_buffer.strip())
+                            log_buffer = ""
+
                         # Map OpenAI finish_reason to Anthropic stop_reason
                         stop_reason = "end_turn"
                         if finish_reason == "length":
@@ -1039,6 +1040,10 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
         
         # If we didn't get a finish reason, close any open blocks
         if not has_sent_stop_reason:
+            if original_request.model.startswith("ollama/") and log_buffer.strip():
+                logger.info("⬅️ %s", log_buffer.strip())
+                log_buffer = ""
+
             # Close any open tool call blocks
             if tool_index is not None:
                 for i in range(1, last_tool_index + 1):
@@ -1097,6 +1102,10 @@ async def create_message(
             clean_model = clean_model[len("anthropic/"):]
         elif clean_model.startswith("openai/"):
             clean_model = clean_model[len("openai/"):]
+        elif clean_model.startswith("gemini/"):
+            clean_model = clean_model[len("gemini/"):]
+        elif clean_model.startswith("ollama/"):
+            clean_model = clean_model[len("ollama/"):]
         
         logger.debug(f"📊 PROCESSING REQUEST: Model={request.model}, Stream={request.stream}")
         
@@ -1110,9 +1119,30 @@ async def create_message(
         elif request.model.startswith("gemini/"):
             litellm_request["api_key"] = GEMINI_API_KEY
             logger.debug(f"Using Gemini API key for model: {request.model}")
+        elif request.model.startswith("ollama/"):
+            litellm_request["api_base"] = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
+            litellm_request["api_key"] = OLLAMA_API_KEY
+            logger.debug(f"Using Ollama API base for model: {request.model}")
         else:
             litellm_request["api_key"] = ANTHROPIC_API_KEY
             logger.debug(f"Using Anthropic API key for model: {request.model}")
+
+        # Log outbound request for Ollama models in human-readable form
+        if request.model.startswith("ollama/"):
+            try:
+                logger.info("➡️ Ollama request:")
+                for msg in litellm_request.get("messages", []):
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                        content = "".join(parts)
+                    logger.info("%s: %s", role, content)
+                if litellm_request.get("tools"):
+                    tool_names = [t.get("function", {}).get("name", "") for t in litellm_request.get("tools", [])]
+                    logger.info("tools: %s", ", ".join(tool_names))
+            except Exception as e:
+                logger.info(f"➡️ Ollama request logging failed: {e}")
         
         # For OpenAI models - modify request format to work with limitations
         if "openai" in litellm_request["model"] and "messages" in litellm_request:
@@ -1255,23 +1285,33 @@ async def create_message(
         # Only log basic info about the request, not the full details
         logger.debug(f"Request for model: {litellm_request.get('model')}, stream: {litellm_request.get('stream', False)}")
         
+        # Extract required fields for LiteLLM
+        model = litellm_request.pop("model", None)
+        messages = litellm_request.pop("messages", None)
+        if not model or messages is None:
+            raise HTTPException(status_code=400, detail="Model and messages are required")
+
         # Handle streaming mode
         if request.stream:
             # Use LiteLLM for streaming
             num_tools = len(request.tools) if request.tools else 0
-            
+
             log_request_beautifully(
-                "POST", 
-                raw_request.url.path, 
-                display_model, 
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                "POST",
+                raw_request.url.path,
+                display_model,
+                model,
+                len(messages),
                 num_tools,
                 200  # Assuming success at this point
             )
             # Ensure we use the async version for streaming
-            response_generator = await litellm.acompletion(**litellm_request)
-            
+            response_generator = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                **litellm_request,
+            )
+
             return StreamingResponse(
                 handle_streaming(response_generator, request),
                 media_type="text/event-stream"
@@ -1279,23 +1319,43 @@ async def create_message(
         else:
             # Use LiteLLM for regular completion
             num_tools = len(request.tools) if request.tools else 0
-            
+
             log_request_beautifully(
-                "POST", 
-                raw_request.url.path, 
-                display_model, 
-                litellm_request.get('model'),
-                len(litellm_request['messages']),
+                "POST",
+                raw_request.url.path,
+                display_model,
+                model,
+                len(messages),
                 num_tools,
                 200  # Assuming success at this point
             )
             start_time = time.time()
-            litellm_response = litellm.completion(**litellm_request)
-            logger.debug(f"✅ RESPONSE RECEIVED: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s")
-            
+            litellm_response = litellm.completion(
+                model=model,
+                messages=messages,
+                **litellm_request,
+            )
+            logger.debug(f"✅ RESPONSE RECEIVED: Model={model}, Time={time.time() - start_time:.2f}s")
+
+            # Log human-readable response for Ollama models
+            if model.startswith("ollama/"):
+                try:
+                    logger.info("⬅️ Ollama response:")
+                    choices = getattr(litellm_response, "choices", [])
+                    for choice in choices:
+                        message = getattr(choice, "message", {})
+                        content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+                        if isinstance(content, list):
+                            parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                            content = "".join(parts)
+                        if content:
+                            logger.info(content)
+                except Exception as e:
+                    logger.info(f"⬅️ Ollama response logging failed: {e}")
+
             # Convert LiteLLM response to Anthropic format
             anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
-            
+
             return anthropic_response
                 
     except Exception as e:
@@ -1354,7 +1414,11 @@ async def count_tokens(
             clean_model = clean_model[len("anthropic/"):]
         elif clean_model.startswith("openai/"):
             clean_model = clean_model[len("openai/"):]
-        
+        elif clean_model.startswith("gemini/"):
+            clean_model = clean_model[len("gemini/"):]
+        elif clean_model.startswith("ollama/"):
+            clean_model = clean_model[len("ollama/"):]
+
         # Convert the messages to a format LiteLLM can understand
         converted_request = convert_anthropic_to_litellm(
             MessagesRequest(
